@@ -8,13 +8,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { GraduationCap, ArrowLeft, QrCode, CheckCircle, XCircle, LogOut, ArrowRight, Mail } from 'lucide-react';
+import { GraduationCap, ArrowLeft, QrCode, CheckCircle, XCircle, LogOut, ArrowRight, Mail, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
 import { markAttendance, getAllUsers, logout } from '@/app/actions/user';
+import { getEvents } from '@/app/actions/events';
+import { getEventRegistrations, getEventRegistrationStats } from '@/app/actions/registration';
 import {Html5QrcodeScanner} from 'html5-qrcode';
 import EventManager from '@/components/event/Events';
-import Chatbot from '@/components/chatbot/Chatbot'; // ✅ 1. IMPORT THE CHATBOT COMPONENT
+import Chatbot from '@/components/chatbot/Chatbot';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 
 export default function ScannerPage() {
   const router = useRouter();
@@ -26,6 +30,11 @@ export default function ScannerPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [scannerSupported, setScannerSupported] = useState(true);
+  const [events, setEvents] = useState<any[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<string | null>(null);
+  const [registrationsDialogOpen, setRegistrationsDialogOpen] = useState(false);
+  const [registrations, setRegistrations] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
 
 
     const handleScan = async (decodedText: string) => {
@@ -83,6 +92,38 @@ export default function ScannerPage() {
     }
     fetchUsers();
   }, [toast]);
+
+  useEffect(() => {
+    async function fetchEvents() {
+      try {
+        const eventsData = await getEvents();
+        setEvents(eventsData || []);
+      } catch (error) {
+        console.error('Error fetching events:', error);
+      }
+    }
+    fetchEvents();
+  }, []);
+
+  const handleViewEventRegistrations = async (eventId: string) => {
+    try {
+      const [regResult, statsResult] = await Promise.all([
+        getEventRegistrations(eventId),
+        getEventRegistrationStats(eventId),
+      ]);
+      
+      if (regResult.success && statsResult.success) {
+        setRegistrations(regResult.registrations || []);
+        setStats(statsResult.stats);
+        setSelectedEvent(eventId);
+        setRegistrationsDialogOpen(true);
+      } else {
+        toast({ variant: "destructive", title: "Error", description: regResult.error || "Failed to fetch registrations" });
+      }
+    } catch (error) {
+      toast({ variant: "destructive", title: "Error", description: "Failed to fetch registrations" });
+    }
+  };
   useEffect(() => {
     if (scanning) {
       const scanner = new Html5QrcodeScanner(
@@ -166,6 +207,12 @@ export default function ScannerPage() {
               <Button variant="ghost" size="sm">
                 <ArrowRight className="h-4 w-4 mr-2" />
                 Get all registered students
+              </Button>
+            </Link>
+            <Link href="/admin/teachers">
+              <Button variant="outline" size="sm">
+                <Users className="h-4 w-4 mr-2" />
+                Manage Teachers
               </Button>
             </Link>
             <Link href="/send-reminder">
@@ -319,6 +366,49 @@ export default function ScannerPage() {
 
           <EventManager />
           
+          {/* Events and Registrations Section */}
+          <Card className="mt-8">
+            <CardHeader>
+              <CardTitle>Events & Registrations</CardTitle>
+              <CardDescription>View registrations for each event</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {events.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Event Name</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Registrations</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {events.map((event) => (
+                      <TableRow key={event._id}>
+                        <TableCell className="font-medium">{event.eventName}</TableCell>
+                        <TableCell>{new Date(event.eventDate).toLocaleDateString()}</TableCell>
+                        <TableCell>{event.eventRegistrations?.length || 0}</TableCell>
+                        <TableCell>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleViewEventRegistrations(event._id)}
+                          >
+                            <Users className="h-4 w-4 mr-2" />
+                            View Registrations
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <p className="text-muted-foreground">No events found</p>
+              )}
+            </CardContent>
+          </Card>
+          
           <Tabs value="all">
             <TabsList className="mb-4">
               <TabsTrigger value="all">All Students</TabsTrigger>
@@ -381,6 +471,84 @@ export default function ScannerPage() {
           © {new Date().getFullYear()} Event Management System. All rights reserved.
         </div>
       </footer>
+      
+      {/* Event Registrations Dialog */}
+      <Dialog open={registrationsDialogOpen} onOpenChange={setRegistrationsDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Event Registrations</DialogTitle>
+            <DialogDescription>
+              {stats && (
+                <div className="grid grid-cols-4 gap-4 mt-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Total</p>
+                    <p className="text-2xl font-bold">{stats.totalRegistrations}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Attended</p>
+                    <p className="text-2xl font-bold">{stats.attended}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Paid</p>
+                    <p className="text-2xl font-bold">{stats.paid}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Collected</p>
+                    <p className="text-2xl font-bold">₹{stats.totalCollected || 0}</p>
+                  </div>
+                </div>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Mobile</TableHead>
+                <TableHead>Payment</TableHead>
+                <TableHead>Attendance</TableHead>
+                <TableHead>Registered At</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {registrations.map((reg: any) => {
+                const student = reg.studentId || {};
+                return (
+                  <TableRow key={reg._id}>
+                    <TableCell className="font-medium">{reg.studentName || student.name || 'N/A'}</TableCell>
+                    <TableCell>{reg.studentEmail || student.email || 'N/A'}</TableCell>
+                    <TableCell>{reg.studentMobile || student.phoneNumber || 'N/A'}</TableCell>
+                    <TableCell>
+                      <Badge variant={
+                        reg.paymentStatus === 'paid' ? 'default' :
+                        reg.paymentStatus === 'free' ? 'secondary' : 'destructive'
+                      }>
+                        {reg.paymentStatus || 'pending'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={reg.attendance ? 'default' : 'outline'}>
+                        {reg.attendance ? 'Yes' : 'No'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {reg.registeredAt ? format(new Date(reg.registeredAt), 'PPp') : 'N/A'}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+              {registrations.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-4 text-muted-foreground">
+                    No registrations found for this event
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </DialogContent>
+      </Dialog>
       
       {/* ✅ 2. ADD THE CHATBOT COMPONENT HERE */}
       <Chatbot />

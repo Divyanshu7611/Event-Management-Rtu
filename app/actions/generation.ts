@@ -73,12 +73,31 @@ export async function generatePosterAction(eventId: string) {
         const posterBuffer = await generatePosterBuffer(eventId);
         if (!posterBuffer) throw new Error('Failed to create poster buffer.');
         
-        const event = await Event.findById(eventId).lean<IEvent>();
+        await connectToDatabase();
+        const event = await Event.findById(eventId);
         if (!event) return { success: false, error: 'Event not found' };
 
         const posterUrl = `data:image/png;base64,${posterBuffer.toString('base64')}`;
+        
+        // Update event with poster URL and status
+        event.posterUrl = posterUrl;
+        event.posterStatus = 'ready';
+        await event.save();
+
         return { success: true, posterUrl, event: JSON.parse(JSON.stringify(event)) };
       } catch (error: any) {
+        console.error('Error generating poster:', error);
+        // Update status to failed
+        try {
+          await connectToDatabase();
+          const event = await Event.findById(eventId);
+          if (event) {
+            event.posterStatus = 'failed';
+            await event.save();
+          }
+        } catch (updateError) {
+          console.error('Error updating poster status:', updateError);
+        }
         return { success: false, error: error.message };
       }
 }

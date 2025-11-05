@@ -96,7 +96,7 @@ export default function EventDetailPage({ params }: { params: Promise<{ eventId:
               <Download className="mr-2 h-4 w-4" />
               Download Poster
             </Button>
-            <Link href={`/student-register?eventId=${event._id}`} className="w-full">
+            <Link href={`/events/${event._id}/register`} className="w-full">
               <Button size="default" className="bg-blue-600 hover:bg-blue-500 text-white font-bold w-full">
                 Register for this Event
               </Button>

@@ -9,13 +9,44 @@ import { reminderEmailTemplate } from "@/mail/Remind";
 import fs from 'fs/promises';
 import path from 'path';
 
+// Helper to get current user from token
+async function getCurrentUser() {
+  const { cookies } = await import('next/headers');
+  const cookieStore = await cookies();
+  const token = cookieStore.get('auth-token')?.value;
+  if (!token) return null;
+  
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.decode(token);
+    if (!decoded || typeof decoded !== 'object') return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 // This action now handles a file upload along with other event data.
 export async function createEvent(formData: FormData) {
   try {
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return { ok: false, error: 'Unauthorized. Please login.' };
+    }
+
     const eventName = formData.get('eventName') as string;
     const eventDate = formData.get('eventDate') as string;
+    const startDateTime = formData.get('startDateTime') as string;
+    const endDateTime = formData.get('endDateTime') as string;
     const motive = formData.get('motive') as string;
+    const description = formData.get('description') as string;
     const registrationFee = formData.get('registrationFee') as string;
+    const feeAmount = formData.get('feeAmount') as string;
+    const centerId = formData.get('centerId') as string;
+    const capacity = formData.get('capacity') as string;
+    const registrationDeadline = formData.get('registrationDeadline') as string;
+    const whatsappGroupLink = formData.get('whatsappGroupLink') as string;
+    const visibility = formData.get('visibility') as string || 'public';
     const certificateFile = formData.get('certificateTemplate') as File;
 
     if (!eventName || !eventDate || !motive) {
@@ -24,6 +55,68 @@ export async function createEvent(formData: FormData) {
 
     await connectToDatabase();
     
+    // Import mongoose and User model for ObjectId handling
+    const mongoose = require('mongoose');
+    const User = (await import('@/models/User')).default;
+    
+    // Determine teacher_id - admin can create events for any teacher, teacher can only create for themselves
+    let teacherId: string | undefined = formData.get('teacherId') as string | null || undefined;
+    let teacherObjectId;
+    
+    if (currentUser.role === 'teacher') {
+      // For teachers, use their own ID from the token
+      // The token contains the teacher's MongoDB _id as a string
+      if (!currentUser.id) {
+        console.error('Teacher ID not found in currentUser:', currentUser);
+        return { ok: false, error: 'Teacher ID not found in session. Please login again.' };
+      }
+      
+      console.log('Teacher creating event, ID from token:', currentUser.id);
+      
+      // Verify teacher exists in database and get their ObjectId
+      if (mongoose.Types.ObjectId.isValid(currentUser.id)) {
+        const teacher = await User.findById(currentUser.id);
+        if (!teacher) {
+          console.error('Teacher not found in database for ID:', currentUser.id);
+          return { ok: false, error: 'Teacher account not found. Please contact administrator.' };
+        }
+        if (teacher.role !== 'teacher') {
+          console.error('User is not a teacher:', teacher.role);
+          return { ok: false, error: 'Account is not a teacher account. Please contact administrator.' };
+        }
+        teacherObjectId = teacher._id;
+        console.log('Teacher found, using ObjectId:', teacherObjectId);
+      } else {
+        console.error('Invalid ObjectId format:', currentUser.id);
+        return { ok: false, error: 'Invalid teacher ID format. Please contact administrator.' };
+      }
+    } else if (currentUser.role === 'admin') {
+      // Admin can specify a teacher, or use admin if not specified
+      if (teacherId && teacherId !== 'admin') {
+        // Admin specified a teacher ID
+        if (mongoose.Types.ObjectId.isValid(teacherId)) {
+          const teacher = await User.findById(teacherId);
+          if (!teacher || teacher.role !== 'teacher') {
+            return { ok: false, error: 'Specified teacher not found or is not a teacher account.' };
+          }
+          teacherObjectId = teacher._id;
+        } else {
+          return { ok: false, error: 'Invalid teacher ID format.' };
+        }
+      } else {
+        // Admin creating event without specifying teacher - use a placeholder
+        // Note: In production, you might want to require admin to specify a teacher
+        teacherObjectId = new mongoose.Types.ObjectId();
+      }
+    } else {
+      return { ok: false, error: 'Unauthorized. Only teachers and admins can create events.' };
+    }
+
+    // Ensure we have a valid teacherObjectId
+    if (!teacherObjectId) {
+      return { ok: false, error: 'Teacher ID is required.' };
+    }
+
     let certificateFilename: string | undefined = undefined;
 
     // 1. Check if a certificate file was uploaded.
@@ -38,25 +131,54 @@ export async function createEvent(formData: FormData) {
       await fs.writeFile(filePath, new Uint8Array(fileBuffer));
     }
 
+    const createdByObjectId = currentUser.id && mongoose.Types.ObjectId.isValid(currentUser.id) 
+      ? new mongoose.Types.ObjectId(currentUser.id) 
+      : undefined;
+
     const newEvent = new Event({ 
       eventName, 
-      eventDate, 
+      eventDate,
+      startDateTime: startDateTime ? new Date(startDateTime) : undefined,
+      endDateTime: endDateTime ? new Date(endDateTime) : undefined,
       motive, 
+      description,
       registrationFee: registrationFee || 'Free',
-      // 6. Save the unique filename to the database for this event.
+      feeAmount: feeAmount ? parseFloat(feeAmount) : undefined,
+      teacherId: teacherObjectId,
+      centerId,
+      capacity: capacity ? parseInt(capacity) : undefined,
+      registrationDeadline: registrationDeadline ? new Date(registrationDeadline) : undefined,
+      whatsappGroupLink,
+      visibility: visibility as 'public' | 'private',
       certificateTemplate: certificateFilename,
+      createdBy: createdByObjectId,
+      posterStatus: 'pending',
     });
 
     await newEvent.save();
     revalidatePath('/admin/scanner');
+    revalidatePath('/teacher/dashboard');
 
     return { ok: true, event: JSON.parse(JSON.stringify(newEvent)) };
   } catch (error: any) {
     console.error("Error creating event:", error);
+    console.error("Error details:", {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      name: error.name
+    });
+    
     if (error.code === 11000) {
         return { ok: false, error: 'An event with this name already exists.' };
     }
-    return { ok: false, error: 'Failed to create event. Please check all fields.' };
+    
+    // Provide more specific error messages
+    if (error.message) {
+      return { ok: false, error: `Failed to create event: ${error.message}` };
+    }
+    
+    return { ok: false, error: 'Failed to create event. Please check all fields and try again.' };
   }
 }
 
@@ -114,7 +236,16 @@ export async function RemainerStudents(id: string) {
 export async function getEvents() {
   try {
     await connectToDatabase();
-    const events = await Event.find({}).sort({ createdAt: -1 }).lean<IEvent[]>();
+    const currentUser = await getCurrentUser();
+    
+    let query: any = {};
+    // If teacher, only show their events
+    if (currentUser && currentUser.role === 'teacher') {
+      const mongoose = require('mongoose');
+      query.teacherId = mongoose.Types.ObjectId.isValid(currentUser.id) ? currentUser.id : new mongoose.Types.ObjectId(currentUser.id);
+    }
+    
+    const events = await Event.find(query).sort({ createdAt: -1 }).lean<IEvent[]>();
     return JSON.parse(JSON.stringify(events));
   } catch (error) {
     return [];
@@ -134,11 +265,89 @@ export async function getEventById(eventId: string) {
 export async function deleteEvent(id: string) {
   try {
     await connectToDatabase();
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return { ok: false, error: 'Unauthorized.' };
+    }
+
+    const event = await Event.findById(id);
+    if (!event) {
+      return { ok: false, error: 'Event not found.' };
+    }
+
+    // Teachers can only delete their own events
+    if (currentUser.role === 'teacher' && event.teacherId.toString() !== currentUser.id) {
+      return { ok: false, error: 'Unauthorized. You can only delete your own events.' };
+    }
+
     await Event.findByIdAndDelete(id);
     revalidatePath('/admin/scanner');
+    revalidatePath('/teacher/dashboard');
     return { ok: true };
   } catch (error) {
     return { ok: false, error: 'Failed to delete event' };
+  }
+}
+
+// Update event
+export async function updateEvent(eventId: string, formData: FormData) {
+  try {
+    await connectToDatabase();
+    const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return { ok: false, error: 'Unauthorized.' };
+    }
+
+    const event = await Event.findById(eventId);
+    if (!event) {
+      return { ok: false, error: 'Event not found.' };
+    }
+
+    // Teachers can only update their own events
+    if (currentUser.role === 'teacher' && event.teacherId.toString() !== currentUser.id) {
+      return { ok: false, error: 'Unauthorized. You can only update your own events.' };
+    }
+
+    const eventName = formData.get('eventName') as string;
+    const eventDate = formData.get('eventDate') as string;
+    const startDateTime = formData.get('startDateTime') as string;
+    const endDateTime = formData.get('endDateTime') as string;
+    const motive = formData.get('motive') as string;
+    const description = formData.get('description') as string;
+    const registrationFee = formData.get('registrationFee') as string;
+    const feeAmount = formData.get('feeAmount') as string;
+    const centerId = formData.get('centerId') as string;
+    const capacity = formData.get('capacity') as string;
+    const registrationDeadline = formData.get('registrationDeadline') as string;
+    const whatsappGroupLink = formData.get('whatsappGroupLink') as string;
+    const visibility = formData.get('visibility') as string;
+
+    if (eventName) event.eventName = eventName;
+    if (eventDate) event.eventDate = eventDate;
+    if (startDateTime) event.startDateTime = new Date(startDateTime);
+    if (endDateTime) event.endDateTime = new Date(endDateTime);
+    if (motive) event.motive = motive;
+    if (description !== null) event.description = description;
+    if (registrationFee !== null) event.registrationFee = registrationFee;
+    if (feeAmount) event.feeAmount = parseFloat(feeAmount);
+    if (centerId !== null) event.centerId = centerId;
+    if (capacity) event.capacity = parseInt(capacity);
+    if (registrationDeadline) event.registrationDeadline = new Date(registrationDeadline);
+    if (whatsappGroupLink !== null) event.whatsappGroupLink = whatsappGroupLink;
+    if (visibility) event.visibility = visibility as 'public' | 'private';
+
+    const mongoose = require('mongoose');
+    event.updatedBy = currentUser.id ? (mongoose.Types.ObjectId.isValid(currentUser.id) ? currentUser.id : undefined) : undefined;
+
+    await event.save();
+    revalidatePath('/admin/scanner');
+    revalidatePath('/teacher/dashboard');
+    revalidatePath(`/events/${eventId}`);
+
+    return { ok: true, event: JSON.parse(JSON.stringify(event)) };
+  } catch (error: any) {
+    console.error('Error updating event:', error);
+    return { ok: false, error: error.message || 'Failed to update event.' };
   }
 }
 

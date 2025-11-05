@@ -9,12 +9,11 @@ export function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
   // Define protected routes
-  const isAdminRoute = path.startsWith('/admin') ;
+  const isAdminRoute = path.startsWith('/admin');
+  const isTeacherRoute = path.startsWith('/teacher');
 
   // Get the token from cookies
   const token = request.cookies.get('auth-token')?.value;
-  // console.log(token)
-
 
   if (isAdminRoute) {
     if (!token) {
@@ -23,14 +22,25 @@ export function middleware(request: NextRequest) {
 
     try {
       const decoded = Jwt.decode(token);
-      // console.log("dedocde token",Jwt.decode(token))
       if (!decoded || (typeof decoded !== 'object' || decoded.role !== 'admin')) {
-        // console.log("There might be error",decoded)
-
         return NextResponse.redirect(new URL('/login', request.url));
       }
     } catch (error) {
-      // console.log("There might be error",error)
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
+  }
+
+  if (isTeacherRoute) {
+    if (!token) {
+      return NextResponse.redirect(new URL('/login', request.url));
+    }
+
+    try {
+      const decoded = Jwt.decode(token);
+      if (!decoded || (typeof decoded !== 'object' || (decoded.role !== 'teacher' && decoded.role !== 'admin'))) {
+        return NextResponse.redirect(new URL('/login', request.url));
+      }
+    } catch (error) {
       return NextResponse.redirect(new URL('/login', request.url));
     }
   }
@@ -39,5 +49,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/admin/:path*'],
+  matcher: ['/admin/:path*', '/teacher/:path*'],
 };

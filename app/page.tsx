@@ -85,7 +85,7 @@ export default function Home() {
             <CardHeader className="flex items-center space-x-2">
               <ShieldCheck className="text-primary" />
               <div>
-                <CardTitle>Core Team Dashboard</CardTitle>
+                <CardTitle>faculty Team Dashboard</CardTitle>
                 <CardDescription>Admin tools and attendance control</CardDescription>
               </div>
             </CardHeader>
@@ -94,7 +94,7 @@ export default function Home() {
             </CardContent>
             <CardFooter>
               <Link href="/admin/scanner" className="w-full">
-                <Button className="w-full">Core Dashboard</Button>
+                <Button className="w-full">Faculty Dashboard</Button>
               </Link>
             </CardFooter>
           </Card>

@@ -58,7 +58,12 @@ export default function LoginPage() {
           title: "Login successful",
           description: "You have been logged in successfully.",
         });
-        router.push('/admin/scanner');
+        // Redirect based on role
+        if (result.role === 'teacher' && result.redirect) {
+          router.push(result.redirect);
+        } else {
+          router.push('/admin/scanner');
+        }
       } else {
         toast({
           variant: "destructive",
@@ -102,9 +107,9 @@ export default function LoginPage() {
                 <Lock className="h-6 w-6 text-primary" />
               </div>
             </div>
-            <CardTitle className="text-center">Admin Login</CardTitle>
+            <CardTitle className="text-center">Admin / Teacher Login</CardTitle>
             <CardDescription className="text-center">
-              Access the QR scanner and attendance management
+              Access the admin dashboard or teacher dashboard
             </CardDescription>
           </CardHeader>
           <CardContent>

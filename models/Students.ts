@@ -28,6 +28,12 @@ export interface IStudent extends Document {
   roundTwoAttendance?: boolean;
   roundOneQualified?: boolean;
   roundTwoQualified?: boolean;
+  certificates?: {
+    eventId: string;
+    eventName: string;
+    certificateUrl: string;
+    issuedAt: Date;
+  }[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,6 +76,14 @@ const StudentSchema = new Schema<IStudent>(
     roundTwoAttendance: { type: Boolean, default: false },
     roundOneQualified: { type: Boolean, default: false },
     roundTwoQualified: { type: Boolean, default: false },
+    certificates: [
+      {
+        eventId: { type: String, required: true },
+        eventName: { type: String, required: true },
+        certificateUrl: { type: String, required: true },
+        issuedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true }
 );

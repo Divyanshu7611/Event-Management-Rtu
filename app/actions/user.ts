@@ -257,7 +257,6 @@ export async function getAllUsers() {
   }
 }
 export async function adminLogin(username: string, password: string) {
-  // ... no changes here
   try {
     // Fixed admin credentials (in a real app, these would be in env variables)
     const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin@rtu';
@@ -282,12 +281,50 @@ export async function adminLogin(username: string, password: string) {
         maxAge: 60 * 60 * 24 * 7, // 1 week
       });
 
-      return { success: true };
+      return { success: true, role: 'admin' };
+    }
+
+    // Try teacher login
+    await connectToDatabase();
+    const { comparePasswords } = await import('@/lib/auth');
+    
+    const teacher = await User.findOne({ 
+      email: username.toLowerCase(),
+      role: 'teacher'
+    }).select('+password');
+
+    if (teacher && teacher.isActive) {
+      const isPasswordValid = await comparePasswords(password, teacher.password || '');
+      
+      if (isPasswordValid) {
+        // Update last login
+        teacher.lastLogin = new Date();
+        await teacher.save();
+
+        const token = generateToken({
+          id: teacher._id.toString(),
+          email: teacher.email,
+          role: 'teacher',
+          name: teacher.name
+        });
+
+        const cookieStore = await cookies();
+        cookieStore.set({
+          name: 'auth-token',
+          value: token,
+          httpOnly: true,
+          path: '/',
+          secure: process.env.NODE_ENV === 'production',
+          maxAge: 60 * 60 * 24 * 7, // 1 week
+        });
+
+        return { success: true, role: 'teacher', redirect: '/teacher/dashboard' };
+      }
     }
 
     return { success: false, error: 'Invalid credentials' };
   } catch (error) {
-    console.error('Error during admin login:', error);
+    console.error('Error during login:', error);
     return { success: false, error: 'Login failed' };
   }
 }
@@ -403,15 +440,22 @@ export async function getStudentByEmail(email: string) {
   }
 }
 export async function getStudentById(userId: string) {
-  // ... no changes here
   try {
     await connectToDatabase();
-    // const user = await User.findById(userId);
-    const user = await Students.findById(userId);
+    
+    // Convert userId to ObjectId for consistent querying
+    const mongoose = require('mongoose');
+    const userObjectId = mongoose.Types.ObjectId.isValid(userId) 
+      ? new mongoose.Types.ObjectId(userId) 
+      : userId;
+    
+    const user = await Students.findById(userObjectId);
 
     if (!user) {
       return { success: false, error: 'User not found' };
     }
+
+    console.log(`Student found: ${user.name} (${user._id}), Certificates: ${user.certificates?.length || 0}`);
 
     return {
       success: true,

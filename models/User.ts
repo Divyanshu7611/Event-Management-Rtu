@@ -3,9 +3,15 @@ import mongoose, { Schema, Document } from 'mongoose';
 export interface IUser extends Document {
   name: string;
   email: string;
-  rollNumber: string;
-  qrCode: string;
-  attendance: {
+  rollNumber?: string;
+  qrCode?: string;
+  password?: string; // For teacher/admin accounts
+  phone?: string;
+  role: 'admin' | 'teacher' | 'student';
+  assignedCenters?: string[]; // For teachers
+  isActive: boolean;
+  lastLogin?: Date;
+  attendance?: {
     date: Date;
     present: boolean;
   }[];
@@ -29,13 +35,36 @@ const UserSchema = new Schema<IUser>(
     },
     rollNumber: {
       type: String,
-      required: [true, 'Please provide a roll number'],
-      unique: true,
       trim: true,
+      sparse: true, // Allow multiple nulls but unique non-null values
     },
     qrCode: {
       type: String,
-      unique: true,
+      sparse: true,
+    },
+    password: {
+      type: String,
+      select: false, // Don't return password by default
+    },
+    phone: {
+      type: String,
+      trim: true,
+    },
+    role: {
+      type: String,
+      enum: ['admin', 'teacher', 'student'],
+      default: 'student',
+    },
+    assignedCenters: {
+      type: [String],
+      default: [],
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    lastLogin: {
+      type: Date,
     },
     attendance: [
       {
