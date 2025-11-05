@@ -36,7 +36,8 @@ const UserSchema = new Schema<IUser>(
     rollNumber: {
       type: String,
       trim: true,
-      sparse: true, // Allow multiple nulls but unique non-null values
+      sparse: true, // Allow multiple nulls/undefined but unique non-null values
+      // No default - field will be undefined if not set
     },
     qrCode: {
       type: String,
@@ -81,7 +82,14 @@ const UserSchema = new Schema<IUser>(
   },
   {
     timestamps: true,
+    // Don't save undefined fields
+    minimize: true,
   }
 );
+
+// Note: We don't create the index here in the schema to avoid duplicate index warnings
+// The index should be created in the database as sparse: true
+// If you need to fix it, run: db.users.dropIndex("rollNumber_1") then create it as sparse
+// Or the code will try to fix it automatically when creating teachers
 
 export default mongoose.models.User || mongoose.model<IUser>('User', UserSchema);

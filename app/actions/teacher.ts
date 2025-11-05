@@ -9,6 +9,7 @@ import { revalidatePath } from 'next/cache';
 import { sendMail } from '@/lib/email';
 import { cookies } from 'next/headers';
 import { randomBytes } from 'crypto';
+import mongoose from 'mongoose';
 
 // Get current user from token
 async function getCurrentUser() {
@@ -64,17 +65,107 @@ export async function createTeacher(formData: FormData) {
     // Parse assigned centers
     const centers = assignedCenters ? assignedCenters.split(',').map(c => c.trim()).filter(c => c) : [];
 
-    const newTeacher = new User({
+    // Build teacher object - teachers don't need rollNumber or qrCode (those are for students only)
+    const teacherDoc: any = {
       name,
       email: email.toLowerCase(),
-      phone,
       password: hashedPassword,
       role: 'teacher',
       assignedCenters: centers,
       isActive: true,
-    });
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    await newTeacher.save();
+    // Only add phone if provided
+    if (phone) {
+      teacherDoc.phone = phone;
+    }
+
+    // Use MongoDB's insertOne directly to avoid Mongoose schema defaults
+    // This ensures rollNumber and qrCode are never set (not even as null)
+    const db = mongoose.connection.db;
+    if (!db) {
+      return { success: false, error: 'Database connection not available.' };
+    }
+    
+    // Try to fix the rollNumber and qrCode indexes if they're not sparse
+    try {
+      const indexes = await db.collection('users').indexes();
+      
+      // Fix rollNumber index
+      const rollNumberIndex = indexes.find((idx: any) => idx.key?.rollNumber === 1);
+      if (rollNumberIndex && !rollNumberIndex.sparse) {
+        try {
+          await db.collection('users').dropIndex('rollNumber_1');
+          await db.collection('users').createIndex({ rollNumber: 1 }, { unique: true, sparse: true });
+          console.log('Fixed rollNumber index - made it sparse');
+        } catch (error: any) {
+          console.warn('Could not fix rollNumber index:', error.message);
+        }
+      }
+      
+      // Fix qrCode index
+      const qrCodeIndex = indexes.find((idx: any) => idx.key?.qrCode === 1);
+      if (qrCodeIndex && !qrCodeIndex.sparse) {
+        try {
+          await db.collection('users').dropIndex('qrCode_1');
+          await db.collection('users').createIndex({ qrCode: 1 }, { unique: true, sparse: true });
+          console.log('Fixed qrCode index - made it sparse');
+        } catch (error: any) {
+          console.warn('Could not fix qrCode index:', error.message);
+        }
+      }
+    } catch (indexError) {
+      console.warn('Error checking/fixing indexes:', indexError);
+      // Continue anyway - try to insert
+    }
+    
+    let result;
+    try {
+      result = await db.collection('users').insertOne(teacherDoc);
+    } catch (insertError: any) {
+      // If we get a duplicate key error on rollNumber or qrCode, try to fix the index and retry
+      if (insertError.code === 11000 && (insertError.keyPattern?.rollNumber || insertError.keyPattern?.qrCode)) {
+        const fieldName = insertError.keyPattern?.rollNumber ? 'rollNumber' : 'qrCode';
+        const indexName = `${fieldName}_1`;
+        console.log(`Duplicate key error on ${fieldName} - attempting to fix index...`);
+        
+        try {
+          // Drop the non-sparse index
+          try {
+            await db.collection('users').dropIndex(indexName);
+            console.log(`Dropped old ${indexName} index`);
+          } catch (dropError: any) {
+            if (dropError.code !== 27 && dropError.codeName !== 'IndexNotFound') {
+              throw dropError;
+            }
+          }
+          
+          // Create sparse index
+          await db.collection('users').createIndex({ [fieldName]: 1 }, { unique: true, sparse: true });
+          console.log(`Created new sparse index on ${fieldName}`);
+          
+          // Retry the insert
+          result = await db.collection('users').insertOne(teacherDoc);
+        } catch (fixError: any) {
+          console.error('Error fixing index:', fixError);
+          return { 
+            success: false, 
+            error: `Failed to create teacher. Please fix the database index: db.users.dropIndex("${indexName}"); db.users.createIndex({ ${fieldName}: 1 }, { unique: true, sparse: true });` 
+          };
+        }
+      } else {
+        throw insertError;
+      }
+    }
+    
+    // Fetch the created teacher using Mongoose for proper serialization
+    const newTeacher = await User.findById(result.insertedId);
+    
+    if (!newTeacher) {
+      return { success: false, error: 'Failed to create teacher account.' };
+    }
 
     // Send invitation email if requested
     if (sendInviteLink) {
@@ -151,18 +242,70 @@ export async function bulkCreateTeachers(csvData: string) {
         const password = randomBytes(8).toString('hex');
         const hashedPassword = await hashPassword(password);
 
-        const newTeacher = new User({
+        // Build teacher object - teachers don't need rollNumber or qrCode (those are for students only)
+        const teacherDoc: any = {
           name,
           email,
-          phone,
           password: hashedPassword,
           role: 'teacher',
           assignedCenters: centers,
           isActive: true,
-        });
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
 
-        await newTeacher.save();
-        created.push({ name, email, password });
+        // Only add phone if provided
+        if (phone) {
+          teacherDoc.phone = phone;
+        }
+
+        // Use MongoDB's insertOne directly to avoid Mongoose schema defaults
+        // This ensures rollNumber and qrCode are never set (not even as null)
+        const db = mongoose.connection.db;
+        if (!db) {
+          errors.push(`Row ${i + 1}: Database connection not available`);
+          continue;
+        }
+        
+        let insertResult;
+        try {
+          // db is guaranteed to be defined here after the check
+          insertResult = await db!.collection('users').insertOne(teacherDoc);
+        } catch (insertError: any) {
+          // If we get a duplicate key error on rollNumber or qrCode, try to fix the index and retry
+          if (insertError.code === 11000 && (insertError.keyPattern?.rollNumber || insertError.keyPattern?.qrCode)) {
+            const fieldName = insertError.keyPattern?.rollNumber ? 'rollNumber' : 'qrCode';
+            const indexName = `${fieldName}_1`;
+            
+            try {
+              // Drop the non-sparse index
+              try {
+                await db!.collection('users').dropIndex(indexName);
+              } catch (dropError: any) {
+                if (dropError.code !== 27 && dropError.codeName !== 'IndexNotFound') {
+                  throw dropError;
+                }
+              }
+              
+              // Create sparse index
+              await db!.collection('users').createIndex({ [fieldName]: 1 }, { unique: true, sparse: true });
+              
+              // Retry the insert
+              insertResult = await db!.collection('users').insertOne(teacherDoc);
+            } catch (fixError: any) {
+              errors.push(`Row ${i + 1}: Failed to create teacher - ${fieldName} index error. Please fix database index.`);
+              continue;
+            }
+          } else {
+            throw insertError;
+          }
+        }
+        
+        // Get the created teacher for password list
+        const createdTeacher = await User.findById(insertResult.insertedId);
+        if (createdTeacher) {
+          created.push({ name, email, password });
+        }
       } catch (err: any) {
         errors.push(`Row ${i + 1}: ${err.message}`);
       }
