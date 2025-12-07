@@ -1,6 +1,6 @@
 # Event Management System - RTU Kota
 
-A comprehensive QR-based attendance tracking and event management system for Rajasthan Technical University (RTU) Kota. This system streamlines event registration, attendance tracking, and communication for various university events and activities.
+A comprehensive QR-based attendance tracking and event management system for Rajasthan Technical University (RTU) Kota. This system streamlines event registration, attendance tracking, Dashboard and communication for various university events and activities.
 
 ---
 ## 🚀 Features
